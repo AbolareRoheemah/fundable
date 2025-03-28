@@ -329,7 +329,158 @@ mod PaymentStream {
 
             stream_id
         }
+        
+        fn create_stream_with_deposit(
+            ref self: ContractState,
+            recipient: ContractAddress,
+            total_amount: u256,
+            start_time: u64,
+            end_time: u64,
+            cancelable: bool,
+            token: ContractAddress,
+            transferable: bool,
+        ) -> u256 {
+            // Input validation
+            assert(!recipient.is_zero(), INVALID_RECIPIENT);
+            assert(total_amount > 0, ZERO_AMOUNT);
+            assert(end_time > start_time, END_BEFORE_START);
+            assert(!token.is_zero(), INVALID_TOKEN);
 
+            // Check allowance and transfer tokens
+            let sender = get_caller_address();
+            let token_dispatcher = IERC20Dispatcher { contract_address: token };
+            let allowance = token_dispatcher.allowance(sender, get_contract_address());
+            assert(allowance >= total_amount, INSUFFICIENT_ALLOWANCE);
+            token_dispatcher.transfer_from(sender, get_contract_address(), total_amount);
+
+            // Create stream
+            let stream_id = self.next_stream_id.read();
+            self.next_stream_id.write(stream_id + 1);
+
+            let duration = end_time - start_time;
+            assert(duration >= 1, TOO_SHORT_DURATION);
+            let rate_per_second = self.calculate_stream_rate(total_amount, duration);
+
+            let erc20_dispatcher = IERC20MetadataDispatcher { contract_address: token };
+            let token_decimals = erc20_dispatcher.decimals();
+            assert(token_decimals <= 18, DECIMALS_TOO_HIGH);
+
+            let stream = Stream {
+                sender: sender,
+                token,
+                token_decimals,
+                total_amount,
+                start_time,
+                end_time,
+                withdrawn_amount: 0,
+                cancelable,
+                transferable,  // Set from parameter
+                status: StreamStatus::Active,
+                rate_per_second,
+                last_update_time: start_time,
+            };
+
+            self.streams.write(stream_id, stream);
+            self.erc721.mint(recipient, stream_id);
+
+            // Update protocol metrics
+            let protocol_metrics = self.protocol_metrics.read();
+            self.protocol_metrics.write(
+                ProtocolMetrics {
+                    total_active_streams: protocol_metrics.total_active_streams + 1,
+                    total_tokens_distributed: protocol_metrics.total_tokens_distributed + total_amount,
+                    total_streams_created: protocol_metrics.total_streams_created + 1,
+                    total_delegations: protocol_metrics.total_delegations,
+                }
+            );
+
+            // Emit event
+            self.emit(
+                Event::StreamCreated(
+                    StreamCreated {
+                        stream_id,
+                        sender,
+                        recipient,
+                        total_amount,
+                        token,
+                    }
+                )
+            );
+
+            stream_id
+        }
+
+        fn restart_and_deposit(
+            ref self: ContractState,
+            stream_id: u256,
+            rate_per_second: UFixedPoint123x128,
+            amount: u256,
+        ) -> bool {
+            // Validate stream and caller
+            let stream = self.streams.read(stream_id);
+            assert(!stream.sender.is_zero(), UNEXISTING_STREAM);
+            assert(stream.status == StreamStatus::Paused, 'Stream is not paused');
+            let sender = get_caller_address();
+            assert(stream.sender == sender, WRONG_SENDER);
+
+            // Validate inputs
+            assert(rate_per_second > 0.into(), 'Rate must be positive');
+            assert(amount > 0, ZERO_AMOUNT);
+
+            // Check allowance and transfer tokens
+            let token_dispatcher = IERC20Dispatcher { contract_address: stream.token };
+            let allowance = token_dispatcher.allowance(sender, get_contract_address());
+            assert(allowance >= amount, INSUFFICIENT_ALLOWANCE);
+            token_dispatcher.transfer_from(sender, get_contract_address(), amount);
+
+            // Calculate new timing
+            let start_time = get_block_timestamp();
+            let total_amount_fp: UFixedPoint123x128 = amount.into();
+            let duration_fp: UFixedPoint123x128 = total_amount_fp / rate_per_second;
+            let duration: u64 = duration_fp.into();  // Assuming conversion to u64
+            let end_time = start_time + duration;
+
+            // Update stream
+            let new_stream = Stream {
+                sender: stream.sender,
+                token: stream.token,
+                token_decimals: stream.token_decimals,
+                total_amount: amount,
+                start_time: start_time,
+                end_time: end_time,
+                withdrawn_amount: 0,
+                cancelable: stream.cancelable,
+                transferable: stream.transferable,  // Preserve existing value
+                status: StreamStatus::Active,
+                rate_per_second: rate_per_second,
+                last_update_time: start_time,
+            };
+
+            self.streams.write(stream_id, new_stream);
+
+            // Update protocol metrics
+            let protocol_metrics = self.protocol_metrics.read();
+            self.protocol_metrics.write(
+                ProtocolMetrics {
+                    total_active_streams: protocol_metrics.total_active_streams,
+                    total_tokens_distributed: protocol_metrics.total_tokens_distributed + amount,
+                    total_streams_created: protocol_metrics.total_streams_created,
+                    total_delegations: protocol_metrics.total_delegations,
+                }
+            );
+
+            // Emit event
+            self.emit(
+                Event::StreamRestarted(
+                    StreamRestarted {
+                        stream_id,
+                        rate_per_second,
+                    }
+                )
+            );
+
+            true
+        }
 
         fn withdraw(
             ref self: ContractState, stream_id: u256, amount: u256, to: ContractAddress,

@@ -250,4 +250,22 @@ pub trait IPaymentStream<TContractState> {
     /// @param amount The amount to refund from the stream
     /// @return Boolean indicating if the refund and pause operation was successful
     fn refund_and_pause(ref self: TContractState, stream_id: u256, amount: u256) -> bool;
+
+    fn create_stream_with_deposit(
+        ref self: TContractState,
+        recipient: ContractAddress,
+        total_amount: u256,
+        start_time: u64,
+        end_time: u64,
+        cancelable: bool,
+        token: ContractAddress,
+        transferable: bool,
+    ) -> u256;
+
+    fn restart_and_deposit(
+        ref self: TContractState,
+        stream_id: u256,
+        rate_per_second: UFixedPoint123x128,
+        amount: u256,
+    ) -> bool;
 }
