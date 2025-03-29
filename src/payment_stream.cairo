@@ -369,7 +369,6 @@ mod PaymentStream {
                 end_time,
                 withdrawn_amount: 0,
                 cancelable,
-                transferable,  // Set from parameter
                 status: StreamStatus::Active,
                 rate_per_second,
                 last_update_time: start_time,
@@ -419,7 +418,7 @@ mod PaymentStream {
             assert(stream.sender == sender, WRONG_SENDER);
 
             // Validate inputs
-            assert(rate_per_second > 0.into(), 'Rate must be positive');
+            assert(rate_per_second != 0.into(), 'Rate must be positive');
             assert(amount > 0, ZERO_AMOUNT);
 
             // Check allowance and transfer tokens
@@ -432,8 +431,8 @@ mod PaymentStream {
             let start_time = get_block_timestamp();
             let total_amount_fp: UFixedPoint123x128 = amount.into();
             let duration_fp: UFixedPoint123x128 = total_amount_fp / rate_per_second;
-            let duration: u64 = duration_fp.into();  // Assuming conversion to u64
-            let end_time = start_time + duration;
+            // let duration: u64 = duration_fp.into();  // Assuming conversion to u64
+            let end_time = start_time + duration_fp;
 
             // Update stream
             let new_stream = Stream {
@@ -445,7 +444,6 @@ mod PaymentStream {
                 end_time: end_time,
                 withdrawn_amount: 0,
                 cancelable: stream.cancelable,
-                transferable: stream.transferable,  // Preserve existing value
                 status: StreamStatus::Active,
                 rate_per_second: rate_per_second,
                 last_update_time: start_time,

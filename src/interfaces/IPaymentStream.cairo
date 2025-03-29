@@ -170,6 +170,8 @@ pub trait IPaymentStream<TContractState> {
         ref self: TContractState, stream_id: u256, new_rate_per_second: UFixedPoint123x128,
     );
 
+    fn ufixed_to_u64(ref self: TContractState, fp: UFixedPoint123x128) -> u64;
+
     /// @notice Gets the protocol fee of the token
     /// @param token The ContractAddress of the token
     /// @return u256 The fee of the token
